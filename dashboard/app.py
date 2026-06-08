@@ -73,6 +73,7 @@ def _add_topo_event(msg: str):
 
 
 def simulation_loop():
+    time.sleep(3)  # Let the WSGI server fully initialize before first emit
     while True:
         net = MeshNetwork(seed=42)
         engine = AlertEngine()
