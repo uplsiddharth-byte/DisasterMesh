@@ -313,9 +313,15 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/health")
+def health():
+    return "OK", 200
+
+
 # ── Start simulation thread (works for both `python app.py` and gunicorn) ──
 
 _sim_thread = threading.Thread(target=simulation_loop, daemon=True)
+_sim_thread.daemon = True
 _sim_thread.start()
 
 
