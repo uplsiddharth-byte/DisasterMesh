@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DisasterMesh — Emergency Response Network</title>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+:root {
+  --bg:        #0a0e1a;
+  --panel:     #0f1520;
+  --border:    #1e2d40;
+  --text:      #c8d8e8;
+  --text-dim:  #6a8aa8;
+  --sos:       #ff2244;
+  --critical:  #ff6600;
+  --warning:   #ffaa00;
+  --info:      #4488aa;
+  --active:    #00ff88;
+  --sleep:     #ffcc00;
+  --failed:    #ff2244;
+  --heal:      #00d4ff;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2e4a68; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', Courier, monospace;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 30px; /* room for ticker */
+}
+
+/* ── TOP BAR ──────────────────────────────────────────────────────── */
+#topbar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  z-index: 10;
+}
+#topbar-title {
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  color: var(--heal);
+  text-shadow: 0 0 10px rgba(0,212,255,0.4);
+}
+#topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+#sos-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sos);
+  font-size: 11px;
+  letter-spacing: 1px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#sos-indicator.active { opacity: 1; }
+#sos-dot {
+  width: 8px; height: 8px;
+  background: var(--sos);
+  border-radius: 50%;
+  animation: blink 0.8s infinite;
+}
+#sim-clock { color: var(--text-dim); font-size: 12px; }
+#wall-clock { color: var(--text); font-size: 13px; }
+
+/* ── MAIN GRID ────────────────────────────────────────────────────── */
+#main {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 310px;
+  gap: 8px;
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── PANEL BASE ───────────────────────────────────────────────────── */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 0 20px rgba(0,0,0,0.4), inset 0 0 40px rgba(0,212,255,0.02);
+}
+.panel-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--heal);
+  text-transform: uppercase;
+  flex-shrink: 0;
+  background: rgba(0,212,255,0.04);
+}
+
+/* ── LEFT PANEL — TOPOLOGY ────────────────────────────────────────── */
+#graph-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+#topology-svg { width: 100%; height: 100%; }
+
+.link {
+  stroke: #1e3a52;
+  stroke-width: 1.5;
+  transition: stroke 0.4s, opacity 0.4s, stroke-width 0.4s;
+}
+.link.faded { stroke: #0e1e2c; opacity: 0.25; }
+.node-circle {
+  stroke: #000;
+  stroke-width: 1.5;
+  transition: fill 0.6s;
+}
+.node-label {
+  font-family: 'Courier New', monospace;
+  font-size: 9px;
+  fill: #8ab0cc;
+  pointer-events: none;
+  user-select: none;
+}
+.node-bat-label {
+  font-family: 'Courier New', monospace;
+  font-size: 8px;
+  fill: var(--text-dim);
+  pointer-events: none;
+}
+.heal-line {
+  stroke: var(--heal);
+  stroke-width: 3;
+  stroke-dasharray: 8 4;
+  fill: none;
+  opacity: 0.9;
+  animation: dash-flow 0.6s linear infinite;
+  pointer-events: none;
+}
+
+#topology-legend {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-circle {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1px solid #000;
+  flex-shrink: 0;
+}
+
+/* ── CENTER PANEL — ALERTS ────────────────────────────────────────── */
+#alert-counters {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 8px 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.counter-box {
+  text-align: center;
+  padding: 6px 4px;
+  border-radius: 3px;
+  border: 1px solid;
+  background: rgba(0,0,0,0.3);
+}
+.counter-box.sos   { border-color: var(--sos);      color: var(--sos); }
+.counter-box.crit  { border-color: var(--critical);  color: var(--critical); }
+.counter-box.warn  { border-color: var(--warning);   color: var(--warning); }
+.counter-box.info  { border-color: var(--info);      color: var(--info); }
+.counter-num { font-size: 22px; font-weight: bold; line-height: 1; }
+.counter-lbl { font-size: 9px; letter-spacing: 1px; margin-top: 2px; }
+
+#alert-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 0;
+}
+.alert-card {
+  border-radius: 3px;
+  padding: 7px 9px;
+  border-left: 3px solid;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: fade-in-slide 0.3s ease;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.alert-card.SOS      { background: rgba(255,34,68,0.12);  border-color: var(--sos);      animation: fade-in-slide 0.3s ease, pulse-card-sos 2.5s infinite; }
+.alert-card.CRITICAL { background: rgba(255,102,0,0.10); border-color: var(--critical); }
+.alert-card.WARNING  { background: rgba(255,170,0,0.08);  border-color: var(--warning); }
+.alert-card.INFO     { background: rgba(44,88,110,0.15);  border-color: var(--info); }
+.alert-card-top { display: flex; align-items: center; gap: 8px; }
+.alert-badge {
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+.badge-SOS      { background: var(--sos);      color: #fff; }
+.badge-CRITICAL { background: var(--critical);  color: #fff; }
+.badge-WARNING  { background: var(--warning);   color: #000; }
+.badge-INFO     { background: var(--info);      color: #fff; }
+.badge-RESPONDED { background: #00aa44; color: #fff; }
+.alert-node   { color: var(--text); font-weight: bold; }
+.alert-sensor { color: var(--text-dim); }
+.alert-value  { color: var(--heal); font-weight: bold; }
+.alert-meta   { display: flex; gap: 12px; color: var(--text-dim); font-size: 10px; }
+.alert-card-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+.dispatch-btn {
+  background: var(--sos);
+  color: #fff;
+  border: none;
+  padding: 3px 10px;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.2s;
+}
+.dispatch-btn:hover { background: #cc1133; }
+
+/* ── RIGHT PANEL — COMMAND ────────────────────────────────────────── */
+#right-panel { overflow-y: auto; }
+#right-inner { padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+
+/* Scenario box — enlarged and color-coded */
+#scenario-box {
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  padding: 18px 14px;
+  text-align: center;
+  background: rgba(0,0,0,0.3);
+  transition: border-color 0.7s ease, box-shadow 0.7s ease, background 0.7s ease;
+}
+#scenario-box.scenario-fire {
+  border-color: #ff2244;
+  box-shadow: 0 0 24px rgba(255,34,68,0.35), 0 0 60px rgba(255,34,68,0.1), inset 0 0 30px rgba(255,34,68,0.06);
+  background: rgba(255,34,68,0.04);
+}
+#scenario-box.scenario-earthquake {
+  border-color: #ff6600;
+  box-shadow: 0 0 24px rgba(255,102,0,0.35), 0 0 60px rgba(255,102,0,0.1), inset 0 0 30px rgba(255,102,0,0.06);
+  background: rgba(255,102,0,0.04);
+}
+#scenario-box.scenario-mass-casualty {
+  border-color: #9944ff;
+  box-shadow: 0 0 24px rgba(153,68,255,0.35), 0 0 60px rgba(153,68,255,0.1), inset 0 0 30px rgba(153,68,255,0.06);
+  background: rgba(153,68,255,0.04);
+}
+#scenario-icon { font-size: 38px; line-height: 1; margin-bottom: 8px; }
+#scenario-name {
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  color: var(--heal);
+  margin-bottom: 6px;
+  transition: color 0.5s;
+}
+#scenario-box.scenario-fire       #scenario-name { color: #ff5566; }
+#scenario-box.scenario-earthquake #scenario-name { color: #ff8833; }
+#scenario-box.scenario-mass-casualty #scenario-name { color: #bb77ff; }
+#scenario-desc { font-size: 10px; color: var(--text-dim); line-height: 1.5; }
+
+.stats-section-title {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(30,45,64,0.5);
+}
+.stat-label { color: var(--text-dim); }
+.stat-value { color: var(--text); font-weight: bold; }
+.stat-value.active-val  { color: var(--active); }
+.stat-value.sleep-val   { color: var(--sleep); }
+.stat-value.failed-val  { color: var(--failed); }
+.stat-value.heal-val    { color: var(--heal); }
+
+.bat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.bat-row  { display: flex; align-items: center; gap: 5px; font-size: 10px; }
+.bat-label { color: var(--text-dim); width: 46px; flex-shrink: 0; }
+.bat-track {
+  flex: 1; height: 7px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px; overflow: hidden;
+  border: 1px solid var(--border);
+}
+.bat-fill { height: 100%; border-radius: 3px; transition: width 0.8s ease, background 0.8s; }
+.bat-pct  { font-size: 9px; color: var(--text-dim); width: 26px; text-align: right; flex-shrink: 0; }
+
+#topo-events { display: flex; flex-direction: column; gap: 3px; }
+.topo-event {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 3px 5px;
+  border-left: 2px solid var(--border);
+  line-height: 1.3;
+  animation: fade-in-slide 0.3s ease;
+}
+.topo-event.fail-event { border-color: var(--sos);  color: #cc7788; }
+.topo-event.heal-event { border-color: var(--heal); color: #88bbcc; }
+
+/* ── BOTTOM TICKER ────────────────────────────────────────────────── */
+#ticker-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 30px;
+  background: #050810;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  z-index: 200;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.6);
+}
+#ticker-label {
+  padding: 0 14px;
+  color: var(--heal);
+  font-size: 10px;
+  letter-spacing: 2px;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  background: rgba(0,212,255,0.06);
+}
+#ticker-track {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+#ticker-content {
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text);
+  position: absolute;
+  letter-spacing: 0.5px;
+}
+#ticker-content.running {
+  animation: ticker-scroll 28s linear;
+}
+
+/* ── ANIMATIONS ───────────────────────────────────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.1; }
+}
+@keyframes dash-flow {
+  to { stroke-dashoffset: -24; }
+}
+@keyframes fade-in-slide {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-card-sos {
+  0%, 100% { box-shadow: 0 0 4px rgba(255,34,68,0.2); }
+  50%       { box-shadow: 0 0 14px rgba(255,34,68,0.5); }
+}
+@keyframes pulse-failed-node {
+  0%, 100% { filter: drop-shadow(0 0 4px #ff2244); }
+  50%       { filter: drop-shadow(0 0 14px #ff2244) drop-shadow(0 0 22px #ff0000); }
+}
+.failed-glow { animation: pulse-failed-node 1.5s infinite; }
+
+@keyframes ticker-scroll {
+  0%   { transform: translateX(calc(100vw - 160px)); }
+  100% { transform: translateX(-100%); }
+}
+</style>
+</head>
+<body>
+
+<!-- ── TOP BAR ──────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <div id="topbar-title">DISASTERMESH — EMERGENCY RESPONSE NETWORK</div>
+  <div id="topbar-right">
+    <div id="sos-indicator">
+      <div id="sos-dot"></div>
+      <span>SOS ACTIVE</span>
+    </div>
+    <div id="sim-clock">SIM TICK: <span id="tick-counter">0</span></div>
+    <div id="wall-clock">--:--:--</div>
+  </div>
+</div>
+
+<!-- ── MAIN GRID ─────────────────────────────────────────────────────── -->
+<div id="main">
+
+  <!-- LEFT: Topology -->
+  <div class="panel">
+    <div class="panel-header">◈ LIVE NETWORK TOPOLOGY</div>
+    <div id="graph-container">
+      <svg id="topology-svg"></svg>
+    </div>
+    <div id="topology-legend">
+      <div class="legend-item">
+        <div class="legend-circle" style="background:#00ff88"></div><span>ACTIVE sensor</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-circle" style="background:#4488ff;width:13px;height:13px"></div><span>ACTIVE relay</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-circle" style="background:#fff;width:18px;height:18px"></div><span>BASE STATION</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-circle" style="background:#ffcc00"></div><span>SLEEP</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-circle" style="background:#ff2244"></div><span>FAILED</span>
+      </div>
+      <div class="legend-item">
+        <div style="width:22px;border-top:2px dashed var(--heal)"></div>
+        <span>HEAL route</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER: Alert Feed -->
+  <div class="panel">
+    <div class="panel-header">◈ LIVE ALERT FEED</div>
+    <div id="alert-counters">
+      <div class="counter-box sos">
+        <div class="counter-num" id="cnt-sos">0</div>
+        <div class="counter-lbl">SOS</div>
+      </div>
+      <div class="counter-box crit">
+        <div class="counter-num" id="cnt-crit">0</div>
+        <div class="counter-lbl">CRITICAL</div>
+      </div>
+      <div class="counter-box warn">
+        <div class="counter-num" id="cnt-warn">0</div>
+        <div class="counter-lbl">WARNING</div>
+      </div>
+      <div class="counter-box info">
+        <div class="counter-num" id="cnt-info">0</div>
+        <div class="counter-lbl">INFO</div>
+      </div>
+    </div>
+    <div id="alert-feed"></div>
+  </div>
+
+  <!-- RIGHT: Command Stats -->
+  <div class="panel" id="right-panel">
+    <div class="panel-header">◈ COMMAND STATS</div>
+    <div id="right-inner">
+
+      <div id="scenario-box">
+        <div id="scenario-icon">⏳</div>
+        <div id="scenario-name">INITIALIZING</div>
+        <div id="scenario-desc">Simulation engine starting up...</div>
+      </div>
+
+      <div>
+        <div class="stats-section-title">Network Health</div>
+        <div class="stat-row"><span class="stat-label">Nodes Active</span>   <span class="stat-value active-val" id="st-active">—</span></div>
+        <div class="stat-row"><span class="stat-label">Nodes Sleeping</span> <span class="stat-value sleep-val"  id="st-sleep">—</span></div>
+        <div class="stat-row"><span class="stat-label">Nodes Failed</span>   <span class="stat-value failed-val" id="st-failed">—</span></div>
+        <div class="stat-row"><span class="stat-label">Total Alerts</span>   <span class="stat-value"            id="st-alerts">—</span></div>
+        <div class="stat-row"><span class="stat-label">Self-Heals</span>     <span class="stat-value heal-val"   id="st-heals">—</span></div>
+        <div class="stat-row"><span class="stat-label">Survivability</span>  <span class="stat-value"            id="st-surv">—</span></div>
+      </div>
+
+      <div>
+        <div class="stats-section-title">Battery Levels (All 15 Nodes)</div>
+        <div class="bat-grid" id="bat-grid"></div>
+      </div>
+
+      <div>
+        <div class="stats-section-title">Topology Events</div>
+        <div id="topo-events"></div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /#main -->
+
+<!-- ── BOTTOM TICKER ──────────────────────────────────────────────────── -->
+<div id="ticker-bar">
+  <div id="ticker-label">◈ NETWORK EVENTS</div>
+  <div id="ticker-track">
+    <div id="ticker-content">DisasterMesh Emergency Response Network — Online — Awaiting simulation data...</div>
+  </div>
+</div>
+
+<script>
+// ── Constants ────────────────────────────────────────────────────────────
+const LAT_EXTENT = [34.046, 34.058];
+const LNG_EXTENT = [-118.257, -118.237];
+const NODE_RADIUS = { sensor: 11, relay: 16, base_station: 22 };
+const NODE_COLOR_ACTIVE = { sensor: '#00ff88', relay: '#4488ff', base_station: '#ffffff' };
+const UNITS = { temperature: '°C', smoke_level: 'AQI', seismic_activity: 'Richter', heart_rate: 'BPM' };
+const MAX_ALERTS = 100;
+
+// ── State ────────────────────────────────────────────────────────────────
+const nodeData    = {};
+const edgeData    = [];
+const alertCounts = { SOS: 0, CRITICAL: 0, WARNING: 0, INFO: 0 };
+let   simTick     = 0;
+let   initialized = false;
+
+// D3 simulation
+let simulation   = null;
+let simNodes     = [];
+let simNodeById  = {};
+let svgGroups    = {};
+
+// ── Battery bars ─────────────────────────────────────────────────────────
+const batGrid = document.getElementById('bat-grid');
+for (let i = 0; i < 15; i++) {
+  const lbl = i < 10 ? `SN${String(i).padStart(2,'0')}` : (i < 14 ? `RY${String(i).padStart(2,'0')}` : 'BS14');
+  batGrid.innerHTML += `
+    <div class="bat-row">
+      <div class="bat-label">${lbl}</div>
+      <div class="bat-track"><div class="bat-fill" id="bf-${i}" style="width:0%"></div></div>
+      <div class="bat-pct" id="bp-${i}">—</div>
+    </div>`;
+}
+
+function updateBattery(id, pct, state) {
+  const fill = document.getElementById(`bf-${id}`);
+  const pctEl = document.getElementById(`bp-${id}`);
+  if (!fill) return;
+  fill.style.width = pct + '%';
+  fill.style.background = state === 'FAILED' ? '#441122' : pct > 50 ? '#00cc66' : pct > 20 ? '#ffaa00' : '#ff3344';
+  if (pctEl) pctEl.textContent = pct + '%';
+}
+
+// ── Wall clock ───────────────────────────────────────────────────────────
+setInterval(() => {
+  document.getElementById('wall-clock').textContent = new Date().toTimeString().split(' ')[0];
+}, 1000);
+
+// ── D3 Force Graph ───────────────────────────────────────────────────────
+const svgEl = document.getElementById('topology-svg');
+const svg   = d3.select('#topology-svg');
+
+function nodeColor(n) {
+  if (!n || n.state === 'FAILED') return '#ff2244';
+  if (n.state === 'SLEEP')  return '#ffcc00';
+  return NODE_COLOR_ACTIVE[n.node_type] || '#888';
+}
+function nodeR(n) { return NODE_RADIUS[n?.node_type] || 11; }
+
+function isEdgeActive(d) {
+  const src = typeof d.source === 'object' ? d.source.id : d.source;
+  const tgt = typeof d.target === 'object' ? d.target.id : d.target;
+  const ns  = nodeData[src];
+  const nt  = nodeData[tgt];
+  return ns && nt && ns.state !== 'FAILED' && nt.state !== 'FAILED';
+}
+
+function getSimPos(id) {
+  const sn = simNodeById[id];
+  return sn ? { x: sn.x || 0, y: sn.y || 0 } : { x: 0, y: 0 };
+}
+
+function ticked() {
+  svgGroups.links.selectAll('.link')
+    .attr('x1', d => { const p = getSimPos(d.source?.id ?? d.source); return p.x; })
+    .attr('y1', d => { const p = getSimPos(d.source?.id ?? d.source); return p.y; })
+    .attr('x2', d => { const p = getSimPos(d.target?.id ?? d.target); return p.x; })
+    .attr('y2', d => { const p = getSimPos(d.target?.id ?? d.target); return p.y; });
+
+  svgGroups.nodes.selectAll('.node-g')
+    .attr('transform', d => {
+      const p = getSimPos(d.id);
+      return `translate(${p.x},${p.y})`;
+    });
+
+  svgGroups.labels.selectAll('.node-lbl-g')
+    .attr('transform', d => {
+      const p = getSimPos(d.id);
+      return `translate(${p.x},${p.y})`;
+    });
+}
+
+function initGraph(topology) {
+  const W = svgEl.clientWidth  || 520;
+  const H = svgEl.clientHeight || 560;
+
+  const xScale = d3.scaleLinear().domain(LNG_EXTENT).range([50, W - 50]);
+  const yScale = d3.scaleLinear().domain(LAT_EXTENT).range([H - 50, 50]);
+
+  svg.selectAll('*').remove();
+
+  const gMain = svg.append('g');
+  svgGroups.heals  = gMain.append('g');
+  svgGroups.links  = gMain.append('g');
+  svgGroups.nodes  = gMain.append('g');
+  svgGroups.labels = gMain.append('g');
+
+  topology.nodes.forEach(n => { nodeData[n.id] = { ...n }; });
+  topology.edges.forEach(e => edgeData.push({ ...e }));
+
+  // Build simulation nodes with geographic initial positions
+  simNodes = topology.nodes.map(n => ({
+    id: n.id,
+    x: xScale(n.lng),
+    y: yScale(n.lat),
+  }));
+  simNodes.forEach(sn => { simNodeById[sn.id] = sn; });
+
+  const simLinks = topology.edges.map(e => ({ source: e.source, target: e.target }));
+
+  simulation = d3.forceSimulation(simNodes)
+    .force('link',    d3.forceLink(simLinks).id(d => d.id).distance(72).strength(0.45))
+    .force('charge',  d3.forceManyBody().strength(-620))
+    .force('center',  d3.forceCenter(W / 2, H / 2).strength(0.08))
+    .force('collide', d3.forceCollide().radius(d => (NODE_RADIUS[nodeData[d.id]?.node_type] || 11) + 16).strength(1))
+    .alphaDecay(0.018)
+    .on('tick', ticked);
+
+  renderStaticElements();
+  initialized = true;
+}
+
+function renderStaticElements() {
+  const allNodes = Object.values(nodeData);
+
+  // Links
+  svgGroups.links.selectAll('.link')
+    .data(edgeData, d => `${d.source}-${d.target}`)
+    .join('line')
+    .attr('class', 'link');
+
+  // Node groups
+  svgGroups.nodes.selectAll('.node-g')
+    .data(allNodes, d => d.id)
+    .join(enter => {
+      const g = enter.append('g').attr('class', 'node-g');
+      g.append('circle').attr('class', 'node-circle');
+      return g;
+    })
+    .each(function(d) {
+      d3.select(this).select('.node-circle')
+        .attr('r', nodeR(d))
+        .attr('fill', nodeColor(d))
+        .attr('stroke', d.node_type === 'base_station' ? '#00d4ff' : '#000')
+        .attr('stroke-width', d.node_type === 'base_station' ? 2.5 : 1.5);
+    });
+
+  // Label groups
+  svgGroups.labels.selectAll('.node-lbl-g')
+    .data(allNodes, d => d.id)
+    .join(enter => {
+      const g = enter.append('g').attr('class', 'node-lbl-g');
+      g.append('text').attr('class', 'node-label');
+      g.append('text').attr('class', 'node-bat-label');
+      return g;
+    })
+    .each(function(d) {
+      const r = nodeR(d);
+      d3.select(this).select('.node-label').attr('x', r + 3).attr('y', -4).text(`N${d.id}`);
+      d3.select(this).select('.node-bat-label').attr('x', r + 3).attr('y', 8)
+        .text(d.state === 'FAILED' ? 'FAIL' : `${d.battery}%`);
+    });
+}
+
+function updateNodeVisual(nid) {
+  const n = nodeData[nid];
+  if (!n || !initialized) return;
+
+  svgGroups.nodes.selectAll('.node-g')
+    .filter(d => d.id === nid)
+    .select('.node-circle')
+    .attr('fill', nodeColor(n))
+    .classed('failed-glow', n.state === 'FAILED');
+
+  svgGroups.labels.selectAll('.node-lbl-g')
+    .filter(d => d.id === nid)
+    .select('.node-bat-label')
+    .text(n.state === 'FAILED' ? 'FAIL' : `${n.battery}%`);
+
+  svgGroups.links.selectAll('.link')
+    .classed('faded', d => !isEdgeActive(d));
+}
+
+function animateHealRoute(path) {
+  if (!path || path.length < 2 || !initialized) return;
+  for (let i = 0; i < path.length - 1; i++) {
+    const pa = getSimPos(path[i]);
+    const pb = getSimPos(path[i + 1]);
+    const line = svgGroups.heals.append('line')
+      .attr('class', 'heal-line')
+      .attr('x1', pa.x).attr('y1', pa.y)
+      .attr('x2', pb.x).attr('y2', pb.y);
+    setTimeout(() => {
+      line.style('transition', 'opacity 1.5s').style('opacity', 0);
+      setTimeout(() => line.remove(), 1600);
+    }, 4000);
+  }
+}
+
+// ── Alert Feed ───────────────────────────────────────────────────────────
+function addAlertCard(evt) {
+  const feed = document.getElementById('alert-feed');
+  const ts   = evt.timestamp ? evt.timestamp.replace('T',' ').replace('Z','').slice(11,19) : '—';
+  const gps  = evt.gps ? `${evt.gps.lat?.toFixed(4)},${evt.gps.lng?.toFixed(4)}` : '—';
+  const unit = UNITS[evt.sensor_type] || '';
+  const isSos = evt.level === 'SOS';
+
+  const card = document.createElement('div');
+  card.className = `alert-card ${evt.level}`;
+  card.id = `card-${evt.alert_id}`;
+  card.innerHTML = `
+    <div class="alert-card-top">
+      <span class="alert-badge badge-${evt.level}" id="badge-${evt.alert_id}">${evt.level}</span>
+      <span class="alert-node">Node ${evt.node_id}</span>
+      <span class="alert-sensor">${(evt.sensor_type||'').replace(/_/g,' ')}</span>
+      <span class="alert-value">${evt.value} ${unit}</span>
+    </div>
+    <div class="alert-meta"><span>⏱ ${ts}</span><span>📍 ${gps}</span></div>
+    ${isSos ? `<div class="alert-card-bottom"><span></span>
+      <button class="dispatch-btn" onclick="dispatch('${evt.alert_id}')">⚡ DISPATCH</button>
+    </div>` : ''}`;
+
+  feed.insertBefore(card, feed.firstChild);
+  while (feed.children.length > MAX_ALERTS) feed.removeChild(feed.lastChild);
+
+  alertCounts[evt.level] = (alertCounts[evt.level] || 0) + 1;
+  document.getElementById('cnt-sos').textContent  = alertCounts.SOS;
+  document.getElementById('cnt-crit').textContent = alertCounts.CRITICAL;
+  document.getElementById('cnt-warn').textContent = alertCounts.WARNING;
+  document.getElementById('cnt-info').textContent = alertCounts.INFO;
+
+  if (evt.level === 'SOS') document.getElementById('sos-indicator').classList.add('active');
+}
+
+function dispatch(alertId) {
+  fetch(`/api/dispatch/${alertId}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(() => {
+      const badge = document.getElementById(`badge-${alertId}`);
+      const btn   = document.querySelector(`#card-${alertId} .dispatch-btn`);
+      if (badge) { badge.className = 'alert-badge badge-RESPONDED'; badge.textContent = '✓ RESPONDED'; }
+      if (btn) btn.remove();
+    });
+}
+
+// ── Stats ────────────────────────────────────────────────────────────────
+function updateStats(data) {
+  document.getElementById('st-active').textContent  = data.active;
+  document.getElementById('st-sleep').textContent   = data.sleeping;
+  document.getElementById('st-failed').textContent  = data.failed;
+  document.getElementById('st-alerts').textContent  = data.total_alerts;
+  document.getElementById('st-heals').textContent   = data.heals;
+  document.getElementById('st-surv').textContent    = data.survivability + '%';
+}
+
+function updateTopoEvents(events) {
+  const c = document.getElementById('topo-events');
+  c.innerHTML = '';
+  events.slice(-5).reverse().forEach(msg => {
+    const d = document.createElement('div');
+    d.className = 'topo-event' + (msg.includes('FAILURE') ? ' fail-event' : msg.includes('HEAL') ? ' heal-event' : '');
+    d.textContent = msg;
+    c.appendChild(d);
+  });
+}
+
+// ── Ticker ───────────────────────────────────────────────────────────────
+const tickerMessages = [];
+const tickerEl = document.getElementById('ticker-content');
+
+function pushTicker(msg) {
+  tickerMessages.unshift(msg);
+  if (tickerMessages.length > 30) tickerMessages.pop();
+  playNextTicker(msg);
+}
+
+function playNextTicker(msg) {
+  tickerEl.classList.remove('running');
+  void tickerEl.offsetWidth; // force reflow to restart animation
+  tickerEl.textContent = msg;
+  tickerEl.classList.add('running');
+}
+
+tickerEl.addEventListener('animationend', () => {
+  if (tickerMessages.length > 1) {
+    const next = tickerMessages[Math.floor(Math.random() * Math.min(tickerMessages.length, 5))];
+    playNextTicker(next);
+  } else {
+    playNextTicker(tickerMessages[0] || '◈ DisasterMesh — Monitoring Active');
+  }
+});
+
+// Start ticker animation
+setTimeout(() => tickerEl.classList.add('running'), 500);
+
+// ── Socket.IO ────────────────────────────────────────────────────────────
+const socket = io();
+
+socket.on('node_status', data => {
+  if (nodeData[data.node_id]) {
+    nodeData[data.node_id].state        = data.state;
+    nodeData[data.node_id].battery      = data.battery_level;
+    nodeData[data.node_id].node_type    = data.node_type;
+  }
+  updateNodeVisual(data.node_id);
+  updateBattery(data.node_id, data.battery_level, data.state);
+});
+
+socket.on('alert_event', data => {
+  addAlertCard(data);
+});
+
+socket.on('topology_change', data => {
+  let tickerMsg;
+  if (data.type === 'fail') {
+    tickerMsg = `⚠  NODE ${data.node_id} HARDWARE FAILURE DETECTED — SELF-HEAL PROTOCOL INITIATED — DIJKSTRA REROUTING IN PROGRESS`;
+    pushTicker(tickerMsg);
+  } else if (data.type === 'heal' && data.new_route) {
+    const path = data.new_route.join(' → ');
+    tickerMsg = `↺  SELF-HEAL COMPLETE — NODE ${data.node_id} REROUTED VIA [ ${path} ] — MESH INTEGRITY RESTORED — NETWORK STABLE`;
+    animateHealRoute(data.new_route);
+    pushTicker(tickerMsg);
+  }
+});
+
+socket.on('scenario_change', data => {
+  document.getElementById('scenario-icon').textContent = data.icon;
+  document.getElementById('scenario-name').textContent = data.name + ' SCENARIO';
+  document.getElementById('scenario-desc').textContent = data.description;
+
+  const box = document.getElementById('scenario-box');
+  box.className = ''; // clear old class
+  const cls = 'scenario-' + data.name.toLowerCase().replace(/\s+/g, '-');
+  box.classList.add(cls);
+
+  // Reset counters and feed on new scenario
+  alertCounts.SOS = 0; alertCounts.CRITICAL = 0; alertCounts.WARNING = 0; alertCounts.INFO = 0;
+  document.getElementById('cnt-sos').textContent  = 0;
+  document.getElementById('cnt-crit').textContent = 0;
+  document.getElementById('cnt-warn').textContent = 0;
+  document.getElementById('cnt-info').textContent = 0;
+  document.getElementById('alert-feed').innerHTML = '';
+  document.getElementById('sos-indicator').classList.remove('active');
+
+  pushTicker(`◈  SCENARIO CHANGE — ${data.icon} ${data.name} — ${data.description} — ALL UNITS STAND BY`);
+});
+
+socket.on('stats_update', data => {
+  simTick++;
+  document.getElementById('tick-counter').textContent = simTick;
+  updateStats(data);
+});
+
+socket.on('topo_events_update', events => {
+  updateTopoEvents(events);
+});
+
+// ── Initial topology fetch ────────────────────────────────────────────────
+function tryInitGraph() {
+  fetch('/api/topology')
+    .then(r => r.json())
+    .then(data => {
+      if (data.nodes && data.nodes.length > 0) {
+        initGraph(data);
+      } else {
+        setTimeout(tryInitGraph, 1200);
+      }
+    })
+    .catch(() => setTimeout(tryInitGraph, 1200));
+}
+
+window.addEventListener('load', () => setTimeout(tryInitGraph, 400));
+
+window.addEventListener('resize', () => {
+  if (initialized && Object.keys(nodeData).length > 0) {
+    // Re-center the force simulation
+    const W = svgEl.clientWidth, H = svgEl.clientHeight;
+    if (simulation) {
+      simulation.force('center', d3.forceCenter(W/2, H/2).strength(0.08));
+      simulation.alpha(0.3).restart();
+    }
+  }
+});
+</script>
+</body>
+</html>
