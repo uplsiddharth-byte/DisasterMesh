@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DisasterMesh — Emergency Response Network</title>
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/d3.v7.min.js') }}"></script>
 <style>
 :root {
   --bg:        #0a0e1a;
@@ -846,14 +846,16 @@ setTimeout(() => tickerEl.classList.add('running'), 500);
 // ── Socket.IO ────────────────────────────────────────────────────────────
 const socket = io();
 
-socket.on('node_status', data => {
-  if (nodeData[data.node_id]) {
-    nodeData[data.node_id].state        = data.state;
-    nodeData[data.node_id].battery      = data.battery_level;
-    nodeData[data.node_id].node_type    = data.node_type;
-  }
-  updateNodeVisual(data.node_id);
-  updateBattery(data.node_id, data.battery_level, data.state);
+socket.on('node_status_batch', batch => {
+  batch.forEach(data => {
+    if (nodeData[data.node_id]) {
+      nodeData[data.node_id].state        = data.state;
+      nodeData[data.node_id].battery      = data.battery_level;
+      nodeData[data.node_id].node_type    = data.node_type;
+    }
+    updateNodeVisual(data.node_id);
+    updateBattery(data.node_id, data.battery_level, data.state);
+  });
 });
 
 socket.on('alert_event', data => {

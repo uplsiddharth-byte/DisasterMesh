@@ -167,14 +167,16 @@ def simulation_loop():
                             "timestamp": alert.timestamp,
                         })
 
-                # Emit node statuses every tick
-                for nid, node in net.nodes.items():
-                    socketio.emit("node_status", {
+                # Emit all node statuses in a single batched event per tick
+                socketio.emit("node_status_batch", [
+                    {
                         "node_id": nid,
                         "state": node.state.value,
                         "battery_level": round(node.battery, 1),
                         "node_type": node.node_type.value,
-                    })
+                    }
+                    for nid, node in net.nodes.items()
+                ])
 
                 # Broadcast latest topology events to frontend
                 with _lock:
@@ -227,13 +229,15 @@ def on_connect():
         emit("scenario_change", payload)
 
     if net is not None:
-        for nid, node in net.nodes.items():
-            emit("node_status", {
+        emit("node_status_batch", [
+            {
                 "node_id": nid,
                 "state": node.state.value,
                 "battery_level": round(node.battery, 1),
                 "node_type": node.node_type.value,
-            })
+            }
+            for nid, node in net.nodes.items()
+        ])
 
         from core.node import NodeState
         active_c  = sum(1 for n in net.nodes.values() if n.state == NodeState.ACTIVE)
