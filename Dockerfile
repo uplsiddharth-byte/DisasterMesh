@@ -14,4 +14,4 @@ ENV PORT=5001
 
 EXPOSE 5001
 
-CMD gunicorn -w 1 -b 0.0.0.0:$PORT --timeout 120 dashboard.app:app
+CMD gunicorn -k gthread -w 1 --threads 8 -b 0.0.0.0:$PORT --timeout 120 dashboard.app:app
