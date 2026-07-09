@@ -39,8 +39,6 @@
 
 ## 📸 Screenshots
 
-> _Screenshots will be added after first deployment._
-
 | Dashboard View | Network Topology |
 |---|---|
 | ![Dashboard](docs/screenshot-dashboard.png) | ![Topology](docs/screenshot-topology.png) |
@@ -49,7 +47,7 @@
 
 ## 🚀 Live Demo
 
-> **[https://disastermesh.onrender.com](https://disastermesh.onrender.com)** ← _replace with your URL after deploy_
+> **[https://disastermesh.onrender.com](https://disastermesh.onrender.com)**
 
 ---
 
