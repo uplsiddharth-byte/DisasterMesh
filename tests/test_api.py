@@ -34,16 +34,39 @@ def test_alerts_returns_a_list():
     assert isinstance(resp.get_json(), list)
 
 
-def test_dispatch_unknown_alert_does_not_error():
+def test_dispatch_unknown_alert_returns_404():
+    """Regression check for issue #2: an alert_id that isn't in the DB
+    must 404, not silently report success."""
     resp = _client().post("/api/dispatch/does-not-exist")
-    # DB may not exist yet (background sim hasn't created it) or may exist
-    # with no matching row - either way this must not 500.
-    assert resp.status_code in (200, 404)
+    assert resp.status_code == 404
+
+
+def test_dispatch_known_alert_succeeds():
+    import sqlite3
+    from alerts.engine import AlertEngine
+    from dashboard.app import DB_PATH
+
+    AlertEngine()  # ensures the alerts table exists, regardless of sim timing
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """INSERT OR REPLACE INTO alerts
+           (alert_id, level, node_id, sensor_type, value, score,
+            lat, lng, timestamp, status)
+           VALUES ('test-alert-1', 'SOS', 0, 'temperature', 99.0, 90.0,
+                   0, 0, '2026-01-01T00:00:00Z', 'OPEN')"""
+    )
+    conn.commit()
+    conn.close()
+
+    resp = _client().post("/api/dispatch/test-alert-1")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"status": "RESPONDED", "alert_id": "test-alert-1"}
 
 
 if __name__ == "__main__":
     test_health()
     test_topology_shape()
     test_alerts_returns_a_list()
-    test_dispatch_unknown_alert_does_not_error()
+    test_dispatch_unknown_alert_returns_404()
+    test_dispatch_known_alert_succeeds()
     print("OK")

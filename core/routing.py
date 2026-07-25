@@ -1,8 +1,12 @@
 """
 routing.py - Ad-hoc routing engine for DisasterMesh.
 
-Primary path: Dijkstra shortest path (via NetworkX).
-Fallback: controlled flooding when the primary path is broken.
+Primary path: Dijkstra shortest path, restricted to "reliable" (short/
+strong-signal) links only. Fallback: BFS flooding over the full physical
+link set, used when no reliable-only path exists. Restricting Dijkstra's
+view is what makes the fallback reachable at all - on the unrestricted
+graph, Dijkstra always finds a path whenever one exists, so flooding
+would never have anything left to contribute.
 Simulates per-hop latency (10–50 ms) and maintains a route-discovery log.
 """
 
@@ -19,6 +23,10 @@ class RoutingEngine:
     """
 
     HOP_LATENCY_MS = (10, 50)  # Min/max ms per hop
+
+    # Links above this weight are "weak" - Dijkstra avoids them, flooding
+    # will still use them as a last resort.
+    RELIABLE_WEIGHT_MAX = 0.2
 
     def __init__(self, graph: nx.Graph):
         self.graph = graph
@@ -53,9 +61,17 @@ class RoutingEngine:
     # Dijkstra wrapper
     # ------------------------------------------------------------------
 
+    def _reliable_view(self) -> nx.Graph:
+        """Read-only view of self.graph containing only reliable links."""
+        return nx.subgraph_view(
+            self.graph,
+            filter_edge=lambda u, v: self.graph[u][v].get("weight", 0)
+            <= self.RELIABLE_WEIGHT_MAX,
+        )
+
     def _dijkstra(self, src: int, dst: int) -> dict:
         try:
-            path = nx.dijkstra_path(self.graph, src, dst, weight="weight")
+            path = nx.dijkstra_path(self._reliable_view(), src, dst, weight="weight")
             hops = len(path) - 1
             latency = self._simulate_latency(hops)
             return {

@@ -304,11 +304,14 @@ def dispatch_alert(alert_id):
     if not DB_PATH.exists():
         return jsonify({"error": "Database not found"}), 404
     conn = sqlite3.connect(DB_PATH)
-    conn.execute(
+    cur = conn.execute(
         "UPDATE alerts SET status='RESPONDED' WHERE alert_id=?", (alert_id,)
     )
     conn.commit()
+    found = cur.rowcount > 0
     conn.close()
+    if not found:
+        return jsonify({"error": "Alert not found", "alert_id": alert_id}), 404
     return jsonify({"status": "RESPONDED", "alert_id": alert_id})
 
 
