@@ -2,6 +2,7 @@
 
 > A real-time wireless sensor network (WSN) simulation that models multi-disaster scenarios, self-healing mesh routing, and live emergency dispatch — all visualized in a D3.js dashboard.
 
+![CI](https://github.com/uplsiddharth-byte/DisasterMesh/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.12+-blue?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.1-green?logo=flask&logoColor=white)
 ![NetworkX](https://img.shields.io/badge/NetworkX-3.6-orange)
@@ -28,12 +29,11 @@
 | Layer | Technology |
 |---|---|
 | Simulation Engine | Python 3.12, NetworkX 3.6 |
-| Web Backend | Flask 3.1, Flask-SocketIO 5.6 |
-| Async Worker | Eventlet 0.41 |
+| Web Backend | Flask 3.1, Flask-SocketIO 5.6 (threading mode) |
 | Database | SQLite (via stdlib `sqlite3`) |
-| Frontend | D3.js v7, Socket.IO 4.7 |
+| Frontend | D3.js v7, Socket.IO 4.7 (vendored locally, no external CDN) |
 | Routing | Dijkstra (NetworkX) + BFS Flood fallback |
-| Deployment | Gunicorn + Eventlet |
+| Deployment | Gunicorn (gthread worker) |
 
 ---
 
@@ -82,6 +82,15 @@ python dashboard/app.py
 
 The dashboard auto-loops through all 3 scenarios. The SQLite database is created automatically at `data/alerts.db` on first run.
 
+### Running Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+Covers Dijkstra/flood routing, severity scoring thresholds, self-healing/failover, node battery duty-cycling, and the Flask API routes. Runs automatically on every push via [GitHub Actions](.github/workflows/ci.yml).
+
 ### API Endpoints
 
 | Method | Endpoint | Description |
@@ -126,10 +135,19 @@ The dashboard subscribes to these real-time events:
 | Event | Payload |
 |---|---|
 | `alert_event` | `{alert_id, level, node_id, sensor_type, value, gps, timestamp}` |
-| `node_status` | `{node_id, state, battery_level, node_type}` |
+| `node_status_batch` | `[{node_id, state, battery_level, node_type}, ...]` (all 15 nodes, one event per tick) |
 | `topology_change` | `{type: "fail"\|"heal", node_id, new_route}` |
 | `scenario_change` | `{name, icon, description}` |
 | `stats_update` | `{active, sleeping, failed, total_alerts, heals, survivability}` |
+
+---
+
+## 🗺 Known Limitations / Roadmap
+
+- [#1](https://github.com/uplsiddharth-byte/DisasterMesh/issues/1) — the BFS flood-routing fallback can't currently trigger in practice (the 15-node mesh is fully connected, so Dijkstra never fails).
+- [#2](https://github.com/uplsiddharth-byte/DisasterMesh/issues/2) — `/api/dispatch/<alert_id>` returns success even for an alert ID that doesn't exist.
+- No authentication on the dispatch endpoint — fine for a simulation demo, would need to change before any real-world use.
+- `/api/alerts` always returns the latest 50 rows with no pagination.
 
 ---
 
